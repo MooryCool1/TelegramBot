@@ -179,3 +179,15 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+sessions/
+logs/
+
+data/chat_history.json
+data/personality_profile.json
+data/reply_queue.json
