@@ -1,0 +1,25 @@
+{
+    "version": 1,
+    "chat_id": "7886384091",
+    "telegram": {
+        "display_name": "Slave🙌🏿",
+        "username": "WhiteSkyx"
+    },
+    "stats": {
+        "incoming_messages": 3,
+        "last_analyzed_count": 3
+    },
+    "profile": {
+        "language": "Persian",
+        "communication_style": "casual",
+        "message_length": "short",
+        "emoji_usage": "none",
+        "relationship_type": "unknown",
+        "relationship_confidence": 0.0,
+        "relationship_evidence": "",
+        "preferred_name": "",
+        "profile_summary": "The user communicates in a casual, informal tone using short messages. They express emotional states and seek support regarding interactions with a third party named 'Morteza'."
+    },
+    "created_at": "2026-11-20T00:44:13",
+    "updated_at": "2026-11-20T00:45:53"
+}

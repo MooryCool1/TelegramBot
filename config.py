@@ -10,15 +10,18 @@ TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
-    "openai/gpt-oss-120b"
+    "qwen/qwen3.8-27b"
 )
 
-TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID")
+# در مرحله اول دیگر به یک چت خاص محدود نیستیم.
+# این مقدار فقط برای سازگاری با حافظه و یادگیری قدیمی نگه داشته شده است.
+TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID", "").strip()
 
+# ارسال خودکار برای تمام چت‌های خصوصی، طبق تنظیم فایل .env
 AUTO_REPLY = os.getenv(
     "AUTO_REPLY",
     "false"
-).lower() == "true"
+).strip().lower() == "true"
 
 
 def validate_config():
@@ -27,7 +30,6 @@ def validate_config():
         "TELEGRAM_API_HASH": TELEGRAM_API_HASH,
         "TELEGRAM_PHONE": TELEGRAM_PHONE,
         "GROQ_API_KEY": GROQ_API_KEY,
-        "TARGET_CHAT_ID": TARGET_CHAT_ID,
     }
 
     missing = [
@@ -43,8 +45,11 @@ def validate_config():
 
     try:
         int(TELEGRAM_API_ID)
-        int(TARGET_CHAT_ID)
-    except ValueError:
-        raise ValueError(
-            "TELEGRAM_API_ID and TARGET_CHAT_ID must be numbers."
-        )
+    except (TypeError, ValueError):
+        raise ValueError("TELEGRAM_API_ID must be a number.")
+
+    if TARGET_CHAT_ID:
+        try:
+            int(TARGET_CHAT_ID)
+        except ValueError:
+            raise ValueError("TARGET_CHAT_ID must be a number when provided.")

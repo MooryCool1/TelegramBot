@@ -1,4 +1,3 @@
-
 import os
 import json
 import uuid
@@ -51,6 +50,7 @@ def add_suggestion(
     incoming_message,
     reply,
     message_id=None,
+    chat_id=None,
     requires_human=True
 ):
     if not reply or not reply.strip():
@@ -59,15 +59,19 @@ def add_suggestion(
 
     replies = load_replies()
 
-    # جلوگیری از پردازش دوباره یک پیام تلگرام
+    # شناسه پیام در تلگرام فقط در محدوده همان چت بررسی می‌شود.
     if message_id is not None:
         for item in replies:
-            if str(item.get("message_id")) == str(message_id):
+            same_message = str(item.get("message_id")) == str(message_id)
+            same_chat = str(item.get("chat_id")) == str(chat_id)
+
+            if same_message and same_chat:
                 print("[-] This Telegram message was already processed.")
                 return None
 
     suggestion = {
         "id": str(uuid.uuid4())[:8],
+        "chat_id": chat_id,
         "message_id": message_id,
         "incoming_message": incoming_message,
         "suggested_reply": reply,
@@ -129,6 +133,7 @@ def show_pending():
     for item in pending:
         print("\n------------------------------")
         print("ID:", item.get("id"))
+        print("Chat ID:", item.get("chat_id", "Unknown"))
         print("Incoming:", item.get("incoming_message"))
         print("Suggested:", item.get("suggested_reply"))
         print("Status:", item.get("status"))
