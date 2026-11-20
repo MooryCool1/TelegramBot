@@ -1,0 +1,25 @@
+{
+    "version": 1,
+    "chat_id": "6843795524",
+    "telegram": {
+        "display_name": "خودم",
+        "username": "MooryCool"
+    },
+    "stats": {
+        "incoming_messages": 2,
+        "last_analyzed_count": 0
+    },
+    "profile": {
+        "language": "unknown",
+        "communication_style": "unknown",
+        "message_length": "unknown",
+        "emoji_usage": "unknown",
+        "relationship_type": "unknown",
+        "relationship_confidence": 0.0,
+        "relationship_evidence": "",
+        "preferred_name": "",
+        "profile_summary": ""
+    },
+    "created_at": "2026-11-20T17:53:12",
+    "updated_at": "2026-11-20T17:53:43"
+}

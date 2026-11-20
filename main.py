@@ -11,16 +11,9 @@ from config import (
 from telegram_client import connect_telegram
 from ai_engine import generate_reply
 
-from user_profiles import (
-    record_incoming_message,
-    profile_analysis_is_due,
-    analyze_user_profile,
-    load_user_profile
-)
-
-from learning_engine import (
-    learn_from_message,
-    load_learned_preferences
+from reply_manager import (
+    add_suggestion,
+    update_status
 )
 
 from memory import (
@@ -28,16 +21,28 @@ from memory import (
     format_memory_context
 )
 
-from reply_manager import (
-    add_suggestion,
-    update_status
+from learning_engine import (
+    learn_from_message,
+    load_learned_preferences
+)
+
+from user_profiles import (
+    record_incoming_message,
+    profile_analysis_is_due,
+    analyze_user_profile,
+    load_user_profile
 )
 
 
 MAX_HISTORY = 10
 
+# جلوگیری از پردازش هم‌زمان یک پیام در چند چت
 processing_lock = asyncio.Lock()
 
+
+# -----------------------------------------
+# GET CHAT HISTORY
+# -----------------------------------------
 
 async def get_chat_history(client, event):
 
@@ -89,31 +94,77 @@ async def get_chat_history(client, event):
         return []
 
 
-async def process_message(client, event):
+# -----------------------------------------
+# PROCESS MESSAGE
+# -----------------------------------------
 
-    if not event.is_private:
-        return
+async def process_message(client, event):
 
     async with processing_lock:
 
-        message = (
-            event.raw_text or ""
-        ).strip()
+        if not event.is_private:
+            return
+
+        message = (event.raw_text or "").strip()
 
         if not message:
-
-            print(
-                "[-] Empty or non-text message. Ignored."
-            )
-
+            print("[-] Empty or non-text message. Ignored.")
             return
 
         chat_id = event.chat_id
 
         print("\n-----------------------------")
-        print("[+] New incoming private message.")
-        print(f"[+] Chat ID: {chat_id}")
+        print(f"[+] New message from chat: {chat_id}")
+        print("[+] Incoming message:")
         print(message)
+
+        # ---------------------------------
+        # GET SENDER INFORMATION
+        # ---------------------------------
+
+        try:
+
+            sender = await event.get_sender()
+
+            display_name = (
+                getattr(sender, "first_name", None)
+                or getattr(sender, "title", None)
+                or "Unknown"
+            )
+
+            username = getattr(
+                sender,
+                "username",
+                None
+            )
+
+        except Exception:
+
+            display_name = "Unknown"
+            username = None
+
+        # ---------------------------------
+        # RECORD USER
+        # ---------------------------------
+
+        try:
+
+            await asyncio.to_thread(
+                record_incoming_message,
+                chat_id,
+                display_name,
+                username
+            )
+
+        except Exception as error:
+
+            print(
+                f"[-] User profile recording error: {error}"
+            )
+
+        # ---------------------------------
+        # GET CHAT HISTORY
+        # ---------------------------------
 
         history = await get_chat_history(
             client,
@@ -124,163 +175,145 @@ async def process_message(client, event):
             f"[+] Loaded {len(history)} previous messages."
         )
 
-        # -------------------------------------
-        # TELEGRAM USER INFORMATION
-        # -------------------------------------
+        # ---------------------------------
+        # LOAD RECIPIENT PROFILE
+        # ---------------------------------
 
-        display_name = ""
-        username = ""
+        recipient_profile = {}
 
         try:
 
-            sender = await event.get_sender()
+            recipient_profile = await asyncio.to_thread(
+                load_user_profile,
+                chat_id
+            )
 
-            if sender:
-
-                display_name = " ".join(
-                    part
-                    for part in [
-                        getattr(sender, "first_name", None),
-                        getattr(sender, "last_name", None)
-                    ]
-                    if part
-                ).strip()
-
-                username = (
-                    getattr(sender, "username", None) or ""
-                )
+            if not isinstance(recipient_profile, dict):
+                recipient_profile = {}
 
         except Exception as error:
 
             print(
-                f"[-] Could not read Telegram user details: {error}"
+                f"[-] Recipient profile loading error: {error}"
             )
 
-        # -------------------------------------
-        # PERSONAL PROFILE
-        # -------------------------------------
+        # ---------------------------------
+        # UPDATE RECIPIENT PROFILE
+        # ---------------------------------
 
-        user_profile_data = await asyncio.to_thread(
-            record_incoming_message,
-            chat_id,
-            display_name,
-            username
-        )
+        try:
 
-        if profile_analysis_is_due(user_profile_data):
+            profile_due = await asyncio.to_thread(
+                profile_analysis_is_due,
+                recipient_profile
+            )
+
+            if profile_due:
+
+                print(
+                    "[+] Recipient profile analysis is due."
+                )
+
+                await asyncio.to_thread(
+                    analyze_user_profile,
+                    chat_id,
+                    history,
+                    message
+                )
+
+                recipient_profile = await asyncio.to_thread(
+                    load_user_profile,
+                    chat_id
+                )
+
+                if not isinstance(recipient_profile, dict):
+                    recipient_profile = {}
+
+        except Exception as error:
 
             print(
-                "[+] Updating this chat's personal profile..."
+                f"[-] Profile analysis error: {error}"
             )
 
-            await asyncio.to_thread(
-                analyze_user_profile,
+        # ---------------------------------
+        # LEARN EXPLICIT MEMORY
+        # ---------------------------------
+
+        try:
+
+            memory_saved = await asyncio.to_thread(
+                learn_explicit_memory,
                 chat_id,
-                history,
                 message
             )
 
-        user_profile_data = await asyncio.to_thread(
-            load_user_profile,
-            chat_id
-        ) or user_profile_data
+            if memory_saved:
+                print("[+] Explicit memory updated.")
 
-        recipient_profile = {
-            "telegram_display_name": (
-                user_profile_data.get("telegram", {}).get(
-                    "display_name",
-                    ""
-                )
-            ),
+        except Exception as error:
 
-            "telegram_username": (
-                user_profile_data.get("telegram", {}).get(
-                    "username",
-                    ""
-                )
-            ),
-
-            **user_profile_data.get("profile", {})
-        }
-
-        print(
-            "[+] Personal profile loaded:",
-            recipient_profile.get(
-                "communication_style",
-                "unknown"
-            ),
-            "| relationship:",
-            recipient_profile.get(
-                "relationship_type",
-                "unknown"
-            )
-        )
-
-        # -------------------------------------
-        # STAGE 3: EXPLICIT MEMORY
-        # -------------------------------------
-
-        print(
-            "[+] Checking explicit personal memories..."
-        )
-
-        saved_memories = await asyncio.to_thread(
-            learn_explicit_memory,
-            chat_id,
-            message
-        )
-
-        if saved_memories:
             print(
-                f"[+] Explicit memories saved: {saved_memories}"
+                f"[-] Memory learning error: {error}"
             )
 
-        memory_context = await asyncio.to_thread(
-            format_memory_context,
-            chat_id
-        )
+        # ---------------------------------
+        # LEARN BEHAVIORAL PREFERENCES
+        # ---------------------------------
 
-        if memory_context:
+        try:
+
+            await asyncio.to_thread(
+                learn_from_message,
+                message,
+                history,
+                chat_id
+            )
+
+        except Exception as error:
+
             print(
-                "[+] Personal memory loaded for this chat."
+                f"[-] Behavioral learning error: {error}"
             )
-        else:
+
+        # ---------------------------------
+        # LOAD CHAT-SPECIFIC DATA
+        # ---------------------------------
+
+        try:
+
+            learned_preferences = await asyncio.to_thread(
+                load_learned_preferences,
+                chat_id
+            )
+
+        except Exception as error:
+
             print(
-                "[+] No personal memory found for this chat."
+                f"[-] Preference loading error: {error}"
             )
 
-        # -------------------------------------
-        # STAGE 3: BEHAVIORAL LEARNING
-        # -------------------------------------
+            learned_preferences = []
 
-        print(
-            "[+] Checking for a behavioral preference to learn..."
-        )
+        try:
 
-        await asyncio.to_thread(
-            learn_from_message,
-            message,
-            history,
-            chat_id
-        )
+            memory_context = await asyncio.to_thread(
+                format_memory_context,
+                chat_id
+            )
 
-        learned_preferences = await asyncio.to_thread(
-            load_learned_preferences,
-            chat_id
-        )
+        except Exception as error:
 
-        print(
-            "[+] Personal learned preferences:",
-            len(learned_preferences)
-        )
+            print(
+                f"[-] Memory context error: {error}"
+            )
 
-        # -------------------------------------
-        # GENERATE AI REPLY
-        # -------------------------------------
+            memory_context = ""
 
-        print(
-            "[+] Generating reply..."
-        )
+        # ---------------------------------
+        # GENERATE REPLY
+        # ---------------------------------
+
+        print("[+] Generating reply...")
 
         reply = await asyncio.to_thread(
             generate_reply,
@@ -293,58 +326,48 @@ async def process_message(client, event):
 
         if not reply:
 
-            print(
-                "[-] No reply generated!"
-            )
-
+            print("[-] No reply generated!")
             return
 
         print("\n[+] Suggested reply:")
         print(reply)
 
-        # -------------------------------------
+        # ---------------------------------
         # SAVE SUGGESTION
-        # -------------------------------------
+        # ---------------------------------
+
+        requires_human = not AUTO_REPLY
 
         result = add_suggestion(
             incoming_message=message,
             reply=reply,
             message_id=event.id,
-            chat_id=chat_id,
-            requires_human=not AUTO_REPLY
+            requires_human=requires_human,
+            chat_id=chat_id
         )
 
         if not result:
 
-            print(
-                "[-] Suggestion was not saved."
-            )
-
-            print(
-                "[-] Message will not be sent."
-            )
-
+            print("[-] Suggestion was not saved.")
+            print("[-] Message will not be sent.")
             return
 
-        print(
-            "[+] Reply suggestion saved."
-        )
+        print("[+] Suggestion added to queue.")
 
-        # -------------------------------------
-        # AUTO REPLY
-        # -------------------------------------
+        # ---------------------------------
+        # AUTO REPLY CHECK
+        # ---------------------------------
 
         if not AUTO_REPLY:
 
-            print(
-                "[+] Auto-send is disabled."
-            )
-
-            print(
-                "[+] Nothing was sent to Telegram."
-            )
+            print("[+] Auto-send is disabled.")
+            print("[+] Nothing was sent to Telegram.")
 
             return
+
+        # ---------------------------------
+        # UPDATE STATUS
+        # ---------------------------------
 
         status_updated = update_status(
             result["id"],
@@ -353,13 +376,16 @@ async def process_message(client, event):
 
         if not status_updated:
 
-            print(
-                "[-] Could not update sending status."
-            )
-
+            print("[-] Could not update sending status.")
             return
 
+        # ---------------------------------
+        # SEND REPLY
+        # ---------------------------------
+
         try:
+
+            print("[+] Sending reply to Telegram...")
 
             input_chat = await event.get_input_chat()
 
@@ -374,10 +400,7 @@ async def process_message(client, event):
                 "sent"
             )
 
-            print(
-                "[+] Reply sent successfully!"
-            )
-
+            print("[+] Reply sent successfully!")
             print(
                 f"[+] Telegram message ID: {sent_message.id}"
             )
@@ -393,6 +416,14 @@ async def process_message(client, event):
                 f"[-] Telegram send error: {error}"
             )
 
+            print(
+                "[-] Reply was not confirmed as sent."
+            )
+
+
+# -----------------------------------------
+# MAIN
+# -----------------------------------------
 
 async def main():
 
@@ -400,56 +431,39 @@ async def main():
 
         validate_config()
 
-        print(
-            "[+] Configuration checked."
-        )
+        print("[+] Configuration checked.")
 
         client = await connect_telegram()
 
-        print(
-            "[+] Mooryane (موریانه) is connected."
-        )
-
-        print(
-            "[+] Listening to all incoming private chats."
-        )
-
-        print(
-            "[+] Group messages are ignored."
-        )
-
-        print(
-            "[+] Per-chat personal profiles are enabled."
-        )
-
-        print(
-            "[+] Per-chat memory is enabled."
-        )
-
-        print(
-            "[+] Per-chat behavioral learning is enabled."
-        )
+        print("[+] Telegram connected!")
+        print("[+] AI reply system is active.")
 
         if AUTO_REPLY:
 
+            print("[!] AUTO-REPLY IS ENABLED!")
             print(
-                "[!] AUTO-REPLY IS ENABLED FOR ALL PRIVATE CHATS!"
-            )
-
-            print(
-                "[!] AI-generated replies will be sent without manual review."
+                "[!] Generated replies will be sent automatically."
             )
 
         else:
 
-            print(
-                "[+] Auto-send is disabled. Replies are suggestions only."
-            )
+            print("[+] Auto-send is disabled.")
+            print("[+] Replies will only be saved as suggestions.")
 
-        @client.on(events.NewMessage(incoming=True))
+        print("[+] Monitoring all private chats...")
+        print("[+] Waiting for messages...")
+
+        @client.on(
+            events.NewMessage(
+                incoming=True
+            )
+        )
         async def message_handler(event):
 
             try:
+
+                if not event.is_private:
+                    return
 
                 await process_message(
                     client,
@@ -461,10 +475,6 @@ async def main():
                 print(
                     f"[-] Message processing error: {error}"
                 )
-
-        print(
-            "[+] Waiting for messages..."
-        )
 
         await client.run_until_disconnected()
 
@@ -480,6 +490,10 @@ async def main():
             f"[-] Main error: {error}"
         )
 
+
+# -----------------------------------------
+# ENTRY POINT
+# -----------------------------------------
 
 if __name__ == "__main__":
 

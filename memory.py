@@ -1,95 +1,174 @@
-# Conversation memory module
-# Store and retrieve approved conversation context here.
 
 import json
 import os
 import re
-import tempfile
-from datetime import datetime
+import uuid
+
+from pathlib import Path
 
 
-DATA_DIR = "data"
-USERS_DIR = os.path.join(DATA_DIR, "users")
+# -----------------------------------------
+# CONFIGURATION
+# -----------------------------------------
+
+BASE_DIR = Path(__file__).resolve().parent
+USERS_DIR = BASE_DIR / "data" / "users"
 
 MAX_MEMORIES = 80
 MAX_CONTENT_LENGTH = 400
 
-ALLOWED_CATEGORIES = {
-    "preference",
-    "interest",
-    "important_event",
-    "preferred_name"
-}
 
+# -----------------------------------------
+# FILE PATH
+# -----------------------------------------
 
-def _now():
-    return datetime.now().isoformat(timespec="seconds")
+def get_memory_file(chat_id):
 
+    user_dir = USERS_DIR / str(chat_id)
 
-def _memory_path(chat_id):
-    user_dir = os.path.join(
-        USERS_DIR,
-        str(int(chat_id))
+    user_dir.mkdir(
+        parents=True,
+        exist_ok=True
     )
 
-    os.makedirs(user_dir, exist_ok=True)
+    return user_dir / "memory.json"
 
-    return os.path.join(user_dir, "memory.json")
 
+# -----------------------------------------
+# LOAD MEMORY
+# -----------------------------------------
 
 def load_memory(chat_id):
-    path = _memory_path(chat_id)
 
-    if not os.path.exists(path):
-        return {"memories": []}
+    memory_file = get_memory_file(chat_id)
+
+    if not memory_file.exists():
+        return {
+            "chat_id": str(chat_id),
+            "memories": []
+        }
 
     try:
-        with open(path, "r", encoding="utf-8") as file:
+
+        with open(
+            memory_file,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
             data = json.load(file)
 
         if not isinstance(data, dict):
-            return {"memories": []}
+            raise ValueError("Invalid memory format")
 
-        if not isinstance(data.get("memories"), list):
-            return {"memories": []}
+        memories = data.get("memories", [])
 
-        return data
+        if not isinstance(memories, list):
+            memories = []
 
-    except (OSError, json.JSONDecodeError):
-        return {"memories": []}
+        return {
+            "chat_id": str(chat_id),
+            "memories": memories
+        }
 
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValueError
+    ):
+
+        print(
+            f"[-] Could not load memory for chat {chat_id}"
+        )
+
+        return {
+            "chat_id": str(chat_id),
+            "memories": []
+        }
+
+
+# -----------------------------------------
+# SAVE MEMORY
+# -----------------------------------------
 
 def save_memory(chat_id, data):
-    path = _memory_path(chat_id)
-    directory = os.path.dirname(path)
 
-    fd, temp_path = tempfile.mkstemp(
-        prefix="memory_",
-        suffix=".tmp",
-        dir=directory
-    )
+    memory_file = get_memory_file(chat_id)
+
+    temp_file = memory_file.with_suffix(".tmp")
 
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as file:
+
+        if not isinstance(data, dict):
+            return False
+
+        memories = data.get("memories", [])
+
+        if not isinstance(memories, list):
+            return False
+
+        memories = memories[-MAX_MEMORIES:]
+
+        save_data = {
+            "chat_id": str(chat_id),
+            "memories": memories
+        }
+
+        with open(
+            temp_file,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
             json.dump(
-                data,
+                save_data,
                 file,
                 ensure_ascii=False,
                 indent=4
             )
 
-        os.replace(temp_path, path)
+        os.replace(
+            temp_file,
+            memory_file
+        )
 
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        return True
 
+    except (OSError, TypeError, ValueError) as error:
 
-def add_memory(chat_id, category, content):
-    if category not in ALLOWED_CATEGORIES:
+        print("[-] Memory save error:", error)
+
+        if temp_file.exists():
+            temp_file.unlink()
+
         return False
 
-    content = str(content).strip()
+
+# -----------------------------------------
+# ADD MEMORY
+# -----------------------------------------
+
+def add_memory(
+    chat_id,
+    category,
+    content,
+    source="explicit"
+):
+
+    allowed_categories = {
+        "preference",
+        "interest",
+        "important_event",
+        "preferred_name"
+    }
+
+    if category not in allowed_categories:
+        return False
+
+    if not isinstance(content, str):
+        return False
+
+    content = content.strip()
 
     if not content:
         return False
@@ -98,164 +177,217 @@ def add_memory(chat_id, category, content):
 
     data = load_memory(chat_id)
 
-    normalized = re.sub(
-        r"\s+",
-        " ",
-        content
-    ).casefold()
+    memories = data["memories"]
 
-    for item in data["memories"]:
+    normalized_content = content.casefold()
 
-        old_content = re.sub(
-            r"\s+",
-            " ",
-            str(item.get("content", ""))
-        ).casefold()
+    # جلوگیری از ذخیره اطلاعات تکراری
+    for item in memories:
+
+        if not isinstance(item, dict):
+            continue
+
+        old_content = str(
+            item.get("content", "")
+        ).strip().casefold()
 
         if (
-            item.get("category") == category
-            and old_content == normalized
+            old_content == normalized_content
+            and item.get("category") == category
         ):
-            item["updated_at"] = _now()
-            save_memory(chat_id, data)
+
             return True
 
-    data["memories"].append({
-        "id": f"{int(datetime.now().timestamp() * 1000)}",
+    new_memory = {
+        "id": uuid.uuid4().hex[:12],
         "category": category,
         "content": content,
-        "created_at": _now(),
-        "updated_at": _now()
-    })
+        "source": source
+    }
 
-    data["memories"] = data["memories"][-MAX_MEMORIES:]
+    memories.append(new_memory)
 
-    save_memory(chat_id, data)
+    data["memories"] = memories[-MAX_MEMORIES:]
 
-    return True
+    return save_memory(chat_id, data)
 
+
+# -----------------------------------------
+# EXPLICIT MEMORY LEARNING
+# -----------------------------------------
 
 def learn_explicit_memory(chat_id, message):
-    """
-    ذخیره اطلاعاتی که کاربر به شکل واضح بیان کرده است.
-    این تابع از API استفاده نمی‌کند.
-    """
 
-    text = str(message or "").strip()
+    if not isinstance(message, str):
+        return False
 
-    if not text:
-        return 0
+    message = message.strip()
 
-    saved = 0
+    if not message:
+        return False
 
-    preference_phrases = (
-        "یادت باشه",
-        "یادت باشد",
-        "از این به بعد",
-        "ترجیح می‌دم",
-        "ترجیح میدم",
-        "ترجیح می دهم",
-        "دوست دارم جواب"
-    )
+    if len(message) > 1000:
+        return False
 
-    if any(phrase in text for phrase in preference_phrases):
+    patterns = [
 
-        if add_memory(
-            chat_id,
-            "preference",
-            text
-        ):
-            saved += 1
+        (
+            r"^(?:یادت باشه|یادت بمونه|این رو به خاطر بسپار)\s*[:،]?\s*(.+)$",
+            "preference"
+        ),
 
-    interest_match = re.search(
-        r"(?:من\s+)?به\s+(.{2,120}?)\s+علاقه دارم[.!؟]?$",
-        text
-    )
+        (
+            r"^(?:از این به بعد)\s+(.+)$",
+            "preference"
+        ),
 
-    if interest_match:
+        (
+            r"^(?:ترجیح میدم|ترجیح می‌دم|من ترجیح میدم|من ترجیح می‌دم)\s+(.+)$",
+            "preference"
+        ),
 
-        interest = interest_match.group(1).strip()
+        (
+            r"^(?:من به)\s+(.+?)\s+(?:علاقه دارم|علاقه‌مندم)$",
+            "interest"
+        ),
 
-        if add_memory(
-            chat_id,
-            "interest",
-            interest
-        ):
-            saved += 1
+        (
+            r"^(?:منو|من را)\s+(.+?)\s+(?:صدا کن|صدا بزن)$",
+            "preferred_name"
+        ),
 
-    name_match = re.search(
-        r"(?:منو|من را)\s+(.{1,60}?)\s+(?:صدا کن|خطاب کن)",
-        text
-    )
+        (
+            r"^(?:اسمم رو|اسم من رو|نامم رو)\s+(.+?)\s+(?:صدا کن|صدا بزن)$",
+            "preferred_name"
+        ),
 
-    if name_match:
+        (
+            r"^(?:این موضوع رو یادت باشه)\s*[:،]?\s*(.+)$",
+            "important_event"
+        )
 
-        preferred_name = name_match.group(1).strip()
-
-        if add_memory(
-            chat_id,
-            "preferred_name",
-            preferred_name
-        ):
-            saved += 1
-
-    return saved
-
-
-def remove_memory(chat_id, item_id):
-    data = load_memory(chat_id)
-
-    old_count = len(data["memories"])
-
-    data["memories"] = [
-        item
-        for item in data["memories"]
-        if item.get("id") != item_id
     ]
 
-    if len(data["memories"]) != old_count:
-        save_memory(chat_id, data)
-        return True
+    for pattern, category in patterns:
+
+        match = re.search(
+            pattern,
+            message,
+            flags=re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        content = match.group(1).strip()
+
+        if not content:
+            return False
+
+        result = add_memory(
+            chat_id=chat_id,
+            category=category,
+            content=content,
+            source="explicit"
+        )
+
+        if result:
+            print(
+                f"[+] Memory saved for chat {chat_id}"
+            )
+
+        return result
 
     return False
 
 
+# -----------------------------------------
+# REMOVE MEMORY
+# -----------------------------------------
+
+def remove_memory(chat_id, item_id):
+
+    data = load_memory(chat_id)
+
+    old_memories = data["memories"]
+
+    new_memories = [
+        item
+        for item in old_memories
+        if (
+            isinstance(item, dict)
+            and item.get("id") != item_id
+        )
+    ]
+
+    if len(new_memories) == len(old_memories):
+        return False
+
+    data["memories"] = new_memories
+
+    return save_memory(chat_id, data)
+
+
+# -----------------------------------------
+# CLEAR MEMORY
+# -----------------------------------------
+
 def clear_memory(chat_id):
-    save_memory(
+
+    return save_memory(
         chat_id,
-        {"memories": []}
+        {
+            "chat_id": str(chat_id),
+            "memories": []
+        }
     )
 
 
-def format_memory_context(chat_id, max_chars=1800):
+# -----------------------------------------
+# FORMAT MEMORY FOR AI
+# -----------------------------------------
+
+def format_memory_context(
+    chat_id,
+    max_chars=1800
+):
+
     data = load_memory(chat_id)
 
-    if not data["memories"]:
+    memories = data["memories"]
+
+    if not memories:
         return ""
 
-    labels = {
-        "preference": "ترجیح",
-        "interest": "علاقه",
-        "important_event": "رویداد مهم",
-        "preferred_name": "نام ترجیحی"
+    category_names = {
+        "preference": "ترجیحات",
+        "interest": "علایق",
+        "important_event": "موارد مهم",
+        "preferred_name": "نحوه خطاب"
     }
 
     lines = []
 
-    for item in data["memories"]:
+    for item in memories:
 
-        category = labels.get(
-            item.get("category"),
-            "یادداشت"
+        if not isinstance(item, dict):
+            continue
+
+        category = item.get("category")
+        content = item.get("content")
+
+        if not isinstance(content, str):
+            continue
+
+        category_name = category_names.get(
+            category,
+            "اطلاعات"
         )
 
-        content = str(
-            item.get("content", "")
-        ).replace("\n", " ").strip()
+        line = f"- {category_name}: {content}"
 
-        if content:
-            lines.append(
-                f"- {category}: {content}"
-            )
+        lines.append(line)
 
-    return "\n".join(lines)[:max_chars]
+    result = "\n".join(lines)
+
+    return result[-max_chars:]
