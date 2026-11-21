@@ -148,6 +148,7 @@ def save_memory(chat_id, data):
 # ADD MEMORY
 # -----------------------------------------
 
+
 def add_memory(
     chat_id,
     category,
@@ -175,28 +176,52 @@ def add_memory(
 
     content = content[:MAX_CONTENT_LENGTH]
 
+    # پاکسازی نام از عبارت‌های اضافی
+    if category == "preferred_name":
+
+        content = re.sub(
+            r"\s*(?:صدام کن|صدا کن|صدا بزن)$",
+            "",
+            content
+        ).strip()
+
+        if not content:
+            return False
+
     data = load_memory(chat_id)
 
     memories = data["memories"]
 
     normalized_content = content.casefold()
 
-    # جلوگیری از ذخیره اطلاعات تکراری
-    for item in memories:
+    # نام جدید، نام قبلی را جایگزین می‌کند
+    if category == "preferred_name":
 
-        if not isinstance(item, dict):
-            continue
+        memories = [
+            item
+            for item in memories
+            if (
+                not isinstance(item, dict)
+                or item.get("category") != "preferred_name"
+            )
+        ]
 
-        old_content = str(
-            item.get("content", "")
-        ).strip().casefold()
+    else:
 
-        if (
-            old_content == normalized_content
-            and item.get("category") == category
-        ):
+        for item in memories:
 
-            return True
+            if not isinstance(item, dict):
+                continue
+
+            old_content = str(
+                item.get("content", "")
+            ).strip().casefold()
+
+            if (
+                old_content == normalized_content
+                and item.get("category") == category
+            ):
+                return True
 
     new_memory = {
         "id": uuid.uuid4().hex[:12],
@@ -212,10 +237,6 @@ def add_memory(
     return save_memory(chat_id, data)
 
 
-# -----------------------------------------
-# EXPLICIT MEMORY LEARNING
-# -----------------------------------------
-
 def learn_explicit_memory(chat_id, message):
 
     if not isinstance(message, str):
@@ -223,46 +244,53 @@ def learn_explicit_memory(chat_id, message):
 
     message = message.strip()
 
-    if not message:
+    if not message or len(message) > 1000:
         return False
 
-    if len(message) > 1000:
-        return False
+    # یکسان‌سازی فاصله‌ها
+    message = re.sub(r"\s+", " ", message)
 
     patterns = [
 
+        # از این به بعد نونو صدام کن
+        (
+            r"^از این به بعد\s+(.+?)\s+صدام کن$",
+            "preferred_name"
+        ),
+
+        # منو نونو صدا کن
+        (
+            r"^(?:از این به بعد\s+)?(?:منو|من را)\s+(.+?)\s+صدا(?:\s+کن|\s+بزن)$",
+            "preferred_name"
+        ),
+
+        # اسم من نونو است
+        (
+            r"^(?:اسمم|اسم من|نام من)\s+(.+?)(?:\s+است|\s+هست|ه)$",
+            "preferred_name"
+        ),
+
+        # یادت باشه
         (
             r"^(?:یادت باشه|یادت بمونه|این رو به خاطر بسپار)\s*[:،]?\s*(.+)$",
             "preference"
         ),
 
-        (
-            r"^(?:از این به بعد)\s+(.+)$",
-            "preference"
-        ),
-
+        # ترجیحات
         (
             r"^(?:ترجیح میدم|ترجیح می‌دم|من ترجیح میدم|من ترجیح می‌دم)\s+(.+)$",
             "preference"
         ),
 
+        # علایق
         (
-            r"^(?:من به)\s+(.+?)\s+(?:علاقه دارم|علاقه‌مندم)$",
+            r"^من به\s+(.+?)\s+(?:علاقه دارم|علاقه‌مندم)$",
             "interest"
         ),
 
+        # موارد مهم
         (
-            r"^(?:منو|من را)\s+(.+?)\s+(?:صدا کن|صدا بزن)$",
-            "preferred_name"
-        ),
-
-        (
-            r"^(?:اسمم رو|اسم من رو|نامم رو)\s+(.+?)\s+(?:صدا کن|صدا بزن)$",
-            "preferred_name"
-        ),
-
-        (
-            r"^(?:این موضوع رو یادت باشه)\s*[:،]?\s*(.+)$",
+            r"^این موضوع رو یادت باشه\s*[:،]?\s*(.+)$",
             "important_event"
         )
 

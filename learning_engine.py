@@ -19,6 +19,7 @@ LEGACY_FILE = DATA_DIR / "learned_preferences.json"
 
 MAX_PREFERENCES = 80
 MAX_PREFERENCE_LENGTH = 300
+BEHAVIOR_THRESHOLD = 3
 
 
 # -----------------------------------------
@@ -27,8 +28,8 @@ MAX_PREFERENCE_LENGTH = 300
 
 def _learning_file(chat_id=None):
 
-    # سازگاری با نسخه قدیمی
     if chat_id is None:
+
         DATA_DIR.mkdir(
             parents=True,
             exist_ok=True
@@ -44,6 +45,113 @@ def _learning_file(chat_id=None):
     )
 
     return user_dir / "learned_preferences.json"
+
+
+def _behavior_file(chat_id):
+
+    user_dir = USERS_DIR / str(chat_id)
+
+    user_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    return user_dir / "behavior_observations.json"
+
+
+# -----------------------------------------
+# LOAD BEHAVIOR OBSERVATIONS
+# -----------------------------------------
+
+def _load_behavior_observations(chat_id):
+
+    file_path = _behavior_file(chat_id)
+
+    if not file_path.exists():
+        return {
+            "humor_positive": 0,
+            "seen": []
+        }
+
+    try:
+
+        with open(
+            file_path,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        if not isinstance(data, dict):
+            raise ValueError("Invalid behavior data")
+
+        seen = data.get("seen", [])
+
+        if not isinstance(seen, list):
+            seen = []
+
+        return {
+            "humor_positive": max(
+                0,
+                int(data.get("humor_positive", 0))
+            ),
+            "seen": seen[-100:]
+        }
+
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+
+        print(
+            f"[-] Behavior loading error: {error}"
+        )
+
+        return {
+            "humor_positive": 0,
+            "seen": []
+        }
+
+
+# -----------------------------------------
+# SAVE BEHAVIOR OBSERVATIONS
+# -----------------------------------------
+
+def _save_behavior_observations(chat_id, data):
+
+    file_path = _behavior_file(chat_id)
+    temp_file = file_path.with_suffix(".tmp")
+
+    try:
+
+        with open(
+            temp_file,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                data,
+                file,
+                ensure_ascii=False,
+                indent=4
+            )
+
+        os.replace(
+            temp_file,
+            file_path
+        )
+
+        return True
+
+    except (OSError, TypeError, ValueError) as error:
+
+        print(
+            f"[-] Behavior save error: {error}"
+        )
+
+        if temp_file.exists():
+            temp_file.unlink()
+
+        return False
 
 
 # -----------------------------------------
@@ -160,7 +268,8 @@ def save_learned_preferences(
     except (OSError, TypeError, ValueError) as error:
 
         print(
-            f"[-] Learning data save error: {error}"
+            "[-] Learning data save error:",
+            error
         )
 
         if temp_file.exists():
@@ -176,7 +285,8 @@ def save_learned_preferences(
 def add_learned_preference(
     chat_id,
     category,
-    content
+    content,
+    source="explicit_feedback"
 ):
 
     if not isinstance(content, str):
@@ -193,25 +303,30 @@ def add_learned_preference(
 
     normalized = content.casefold()
 
-    # جلوگیری از ثبت موارد تکراری
+    # جلوگیری از ثبت تکراری
     for item in preferences:
 
-        old_content = item.get(
-            "content",
-            ""
-        )
+        old_content = item.get("content", "")
 
         if (
             isinstance(old_content, str)
             and old_content.casefold() == normalized
             and item.get("category") == category
-        ):  
+        ):
+
             return True
+
+    # جایگزینی ترجیح قبلی در همان دسته
+    preferences = [
+        item
+        for item in preferences
+        if item.get("category") != category
+    ]
 
     preferences.append({
         "category": category,
         "content": content,
-        "source": "explicit_feedback"
+        "source": source
     })
 
     return save_learned_preferences(
@@ -258,6 +373,80 @@ def clear_learned_preferences(chat_id):
 
 
 # -----------------------------------------
+# BEHAVIOR LEARNING
+# -----------------------------------------
+
+def learn_from_behavior(incoming_message, history, chat_id):
+    if not history:
+        return False
+
+    positive_reactions = (
+        "باحال بود", "خندیدم", "عالی بود",
+        "خوب بود", "😂", "🤣", "خخخ", "ههه"
+    )
+
+    message = incoming_message.lower()
+
+    if not any(word in message for word in positive_reactions):
+        return False
+
+    # پیدا کردن آخرین پیام واقعی ارسال‌شده توسط خودمان
+    my_message_index = None
+
+    for index in range(len(history) - 1, -1, -1):
+        if history[index].get("sender") == "me":
+            my_message_index = index
+            break
+
+    if my_message_index is None:
+        return False
+
+    # بررسی اینکه قبل از پیام ما درخواست شوخی وجود داشته یا نه
+    previous_messages = history[:my_message_index]
+
+    requested_humor = any(
+        any(word in item.get("text", "").lower()
+            for word in ("جوک", "شوخی", "بخندیم"))
+        for item in previous_messages
+        if item.get("sender") == "partner"
+    )
+
+    if not requested_humor:
+        return False
+
+    observations = _load_behavior_observations(chat_id)
+
+    seen_id = history[my_message_index].get("message_id")
+
+    if seen_id in observations["seen"]:
+        return False
+
+    observations["seen"].append(seen_id)
+    observations["humor_positive"] += 1
+
+    _save_behavior_observations(chat_id, observations)
+
+    print(
+        f"[+] Behavioral observation: "
+        f"positive humor ({observations['humor_positive']}/3)"
+    )
+
+    if observations["humor_positive"] >= 3:
+        add_learned_preference(
+            chat_id,
+            "humor",
+            "مخاطب به شوخی و جوک واکنش مثبت نشان می‌دهد.",
+            source="behavior_observation"
+        )
+
+        observations["humor_positive"] = 0
+        _save_behavior_observations(chat_id, observations)
+
+        print("[+] Learned new behavioral preference!")
+
+    return True
+
+# -----------------------------------------
 # LEARN FROM MESSAGE
 # -----------------------------------------
 
@@ -268,6 +457,7 @@ def learn_from_message(
 ):
 
     if chat_id is None:
+
         print(
             "[-] Learning skipped: chat_id is required."
         )
@@ -282,86 +472,111 @@ def learn_from_message(
     if not message or len(message) > 1000:
         return False
 
+    message = re.sub(
+        r"\s+",
+        " ",
+        message
+    )
+
     rules = [
 
-        # درخواست پاسخ کوتاه
+        # ---------------------------------
+        # MESSAGE LENGTH
+        # ---------------------------------
+
         (
             r"(?:کوتاه(?:تر)?|مختصرتر)\s+(?:جواب بده|پاسخ بده|حرف بزن)",
             "message_length",
             "مخاطب پاسخ‌های کوتاه و مختصر را ترجیح می‌دهد."
         ),
 
-        # درخواست پاسخ مفصل
         (
             r"(?:مفصل(?:تر)?|با جزئیات بیشتر)\s+(?:جواب بده|پاسخ بده|توضیح بده)",
             "message_length",
             "مخاطب پاسخ‌های مفصل و دارای جزئیات را ترجیح می‌دهد."
         ),
 
-        # عدم استفاده از ایموجی
+        # ---------------------------------
+        # EMOJI
+        # ---------------------------------
+
         (
             r"(?:ایموجی|شکلک)\s+(?:نذار|استفاده نکن|نفرست)",
             "emoji_usage",
             "مخاطب پاسخ بدون ایموجی را ترجیح می‌دهد."
         ),
 
-        # استفاده از ایموجی
         (
             r"(?:ایموجی|شکلک)\s+(?:بذار|استفاده کن|بفرست)",
             "emoji_usage",
             "مخاطب استفاده از ایموجی را ترجیح می‌دهد."
         ),
 
-        # درخواست لحن رسمی
+        # ---------------------------------
+        # TONE
+        # ---------------------------------
+
         (
             r"(?:رسمی(?:تر)?|مودبانه‌تر)\s+(?:حرف بزن|جواب بده|پاسخ بده)",
             "tone",
             "مخاطب لحن رسمی‌تر را ترجیح می‌دهد."
         ),
 
-        # درخواست لحن خودمانی
         (
             r"(?:خودمونی‌تر|صمیمی‌تر|راحت‌تر)\s+(?:حرف بزن|جواب بده|پاسخ بده)",
             "tone",
             "مخاطب لحن خودمانی و صمیمی را ترجیح می‌دهد."
         ),
 
-        # درخواست عدم تکرار
+        # ---------------------------------
+        # REPETITION
+        # ---------------------------------
+
         (
             r"(?:تکرار نکن|اینقدر تکرار نکن|حرف(?:‌| )تکراری نزن)",
             "conversation_style",
             "مخاطب از تکرار عبارت‌ها و پاسخ‌های قبلی خوشش نمی‌آید."
         ),
 
-        # درخواست فارسی
+        # ---------------------------------
+        # LANGUAGE
+        # ---------------------------------
+
         (
-            r"(?:فارسی\s+جواب بده|فارسی\s+حرف بزن)",
+            r"(?:فارسی\s+(?:جواب بده|حرف بزن)|به فارسی صحبت کن)",
             "language",
             "مخاطب پاسخ فارسی را ترجیح می‌دهد."
         ),
 
-        # درخواست عدم استفاده از خطاب خاص
+        # ---------------------------------
+        # ADDRESSING
+        # ---------------------------------
+
         (
             r"(?:منو|من را)\s+با\s+(.+?)\s+(?:صدا نکن|خطاب نکن)",
             "addressing",
             None
         ),
 
-        # درخواست شوخی کمتر
+        # ---------------------------------
+        # HUMOR
+        # ---------------------------------
+
         (
-            r"(?:شوخی نکن|کمتر شوخی کن|جدی‌تر باش)",
+            r"(?:وقتی\s+.+?،?\s*)?(?:شوخی نکن|کمتر شوخی کن|جدی‌تر باش)",
             "humor",
-            "مخاطب لحن جدی‌تر و شوخی کمتر را ترجیح می‌دهد."
+            "مخاطب هنگام ناراحتی یا در مکالمه جدی، شوخی کمتر و لحن جدی را ترجیح می‌دهد."
         ),
 
-        # درخواست شوخی بیشتر
         (
             r"(?:بیشتر شوخی کن|شوخ(?:‌| )طبع‌تر باش)",
             "humor",
             "مخاطب لحن شوخ‌طبعانه‌تری را ترجیح می‌دهد."
         )
+
     ]
 
+    # ابتدا بررسی بازخورد مستقیم
     for pattern, category, content in rules:
 
         match = re.search(
@@ -397,4 +612,9 @@ def learn_from_message(
 
         return result
 
-    return False
+    # سپس بررسی رفتار مخاطب
+    return learn_from_behavior(
+        message,
+        history,
+        chat_id
+    )

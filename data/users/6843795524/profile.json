@@ -6,20 +6,20 @@
         "username": "MooryCool"
     },
     "stats": {
-        "incoming_messages": 2,
-        "last_analyzed_count": 0
+        "incoming_messages": 6,
+        "last_analyzed_count": 3
     },
     "profile": {
         "language": "unknown",
-        "communication_style": "unknown",
-        "message_length": "unknown",
-        "emoji_usage": "unknown",
+        "communication_style": "casual",
+        "message_length": "short",
+        "emoji_usage": "none",
         "relationship_type": "unknown",
         "relationship_confidence": 0.0,
         "relationship_evidence": "",
         "preferred_name": "",
-        "profile_summary": ""
+        "profile_summary": "The user communicates in a casual and informal tone with short messages. The interaction includes playful questions and standard greetings without explicit relationship definitions."
     },
     "created_at": "2026-11-20T17:53:12",
-    "updated_at": "2026-11-20T17:53:43"
+    "updated_at": "2026-11-20T19:09:33"
 }

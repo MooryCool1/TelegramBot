@@ -17,6 +17,9 @@ from reply_manager import (
 )
 
 from memory import (
+    get_memory_file,
+    load_memory,
+    save_memory,
     learn_explicit_memory,
     format_memory_context
 )
@@ -119,6 +122,33 @@ async def process_message(client, event):
         print(message)
 
         # ---------------------------------
+        # INITIALIZE MEMORY FILE
+        # ---------------------------------
+
+        try:
+
+            memory_file = get_memory_file(chat_id)
+
+            if not memory_file.exists():
+
+                memory_data = load_memory(chat_id)
+
+                save_memory(
+                    chat_id,
+                    memory_data
+                )
+
+                print(
+                    "[+] Memory file created for this chat."
+                )
+
+        except Exception as error:
+
+            print(
+                f"[-] Memory initialization error: {error}"
+            )
+
+        # ---------------------------------
         # GET SENDER INFORMATION
         # ---------------------------------
 
@@ -170,7 +200,10 @@ async def process_message(client, event):
             client,
             event
         )
+        print("\n[DEBUG] Last 5 history messages:")
 
+        for item in history[-5:]:
+            print(item)
         print(
             f"[+] Loaded {len(history)} previous messages."
         )
@@ -401,6 +434,7 @@ async def process_message(client, event):
             )
 
             print("[+] Reply sent successfully!")
+
             print(
                 f"[+] Telegram message ID: {sent_message.id}"
             )
@@ -441,6 +475,7 @@ async def main():
         if AUTO_REPLY:
 
             print("[!] AUTO-REPLY IS ENABLED!")
+
             print(
                 "[!] Generated replies will be sent automatically."
             )

@@ -6,20 +6,20 @@
         "username": "WhiteSkyx"
     },
     "stats": {
-        "incoming_messages": 5,
-        "last_analyzed_count": 3
+        "incoming_messages": 32,
+        "last_analyzed_count": 28
     },
     "profile": {
         "language": "Persian",
         "communication_style": "casual",
         "message_length": "short",
-        "emoji_usage": "none",
+        "emoji_usage": "frequent",
         "relationship_type": "unknown",
         "relationship_confidence": 0.0,
         "relationship_evidence": "",
-        "preferred_name": "",
-        "profile_summary": "The user communicates in a casual, informal tone using short messages. They express emotional states and seek support regarding interactions with a third party named 'Morteza'."
+        "preferred_name": "نونو",
+        "profile_summary": "The user communicates in a casual, informal tone using short messages. They frequently use emojis and laughter expressions when reacting to humor."
     },
     "created_at": "2026-11-20T00:44:13",
-    "updated_at": "2026-11-20T17:54:03"
+    "updated_at": "2026-11-20T19:05:01"
 }
